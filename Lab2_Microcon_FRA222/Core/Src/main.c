@@ -78,7 +78,7 @@ static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
-float PlantSimulation(float VIn);
+void task1();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -137,33 +137,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		setpoint = suminone(ADC_RawRead, 1);
-		en_motor = suminone(ADC_RawRead, 2);
-		setpoint_Dg = (suminone(ADC_RawRead, 1)/4095.0)*360.0;
-		en_motor_Dg = (suminone(ADC_RawRead, 2)/4095.0)*360.0;
-
-		static uint32_t timestamp = 0;
-		if (timestamp < __HAL_TIM_GET_COUNTER(&htim2)) {
-			timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
-			diffpos = setpoint_Dg - en_motor_Dg;
-			if(diffpos > 200)
-				diffpos -=360;
-			if(diffpos < -200)
-				diffpos +=360;
-
-			if(diffpos >= 0){
-				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,1);
-				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,0);
-				Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
-			}
-			else if(diffpos <= 0){
-				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,0);
-				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,1);
-				Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
-			}
-			PWMset = fabs(Vfeedback*10);
-			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWMset);
-		}
+		task1();
 	}
   /* USER CODE END 3 */
 }
@@ -534,17 +508,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-float PlantSimulation(float VIn) // run with fix frequency
-{
-	static float speed = 0;
-	static float position = 0;
-	float current = VIn - speed * 0.0123;
-	float torque = current * 0.456;
-	float acc = torque * 0.789;
-	speed += acc;
-	position += speed;
-	return position;
-}
 
 int suminone(uint16_t pot[200], int numpot) {
 	uint32_t sum = 0;
@@ -556,6 +519,36 @@ int suminone(uint16_t pot[200], int numpot) {
 		}
 	}
 	return sum / 100;
+}
+
+void task1(){
+	setpoint = suminone(ADC_RawRead, 1);
+	en_motor = suminone(ADC_RawRead, 2);
+	setpoint_Dg = (suminone(ADC_RawRead, 1)/4095.0)*360.0;
+	en_motor_Dg = (suminone(ADC_RawRead, 2)/4095.0)*360.0;
+
+	static uint32_t timestamp = 0;
+	if (timestamp < __HAL_TIM_GET_COUNTER(&htim2)) {
+		timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
+		diffpos = setpoint_Dg - en_motor_Dg;
+		if(diffpos > 200)
+			diffpos -=360;
+		if(diffpos < -200)
+			diffpos +=360;
+
+		if(diffpos >= 0){
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,1);
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,0);
+			Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
+		}
+		else if(diffpos <= 0){
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,0);
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,1);
+			Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
+		}
+		PWMset = fabs(Vfeedback*10);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWMset);
+	}
 }
 /* USER CODE END 4 */
 
