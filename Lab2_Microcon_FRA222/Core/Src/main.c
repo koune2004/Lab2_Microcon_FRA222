@@ -47,25 +47,74 @@ UART_HandleTypeDef hlpuart1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim5;
 
 /* USER CODE BEGIN PV */
-arm_pid_instance_f32 PID = { 0 };
-float position = 0;
-float setposition = 1;
-int Vfeedback = 0;
+//int set_pos = 0;
+float pi = 3.1415926535897932384626433832795;
+//float di_pulley = 24.95;
 
-uint16_t ADC_RawRead[200] = { 0 };
-float setpoint = 0;
+arm_pid_instance_f32 PID = { 0 };
+uint32_t QEI_raw = 0;
+float QEI_mm = 0;
+float set_point = 0;
 float en_motor = 0;
-float setpoint_Dg = 0;
-float en_motor_Dg = 0;
 float PWMset = 0;
 float diffpos = 0;
+uint16_t Vfeedback = 0;
+uint8_t condi = 0;
 
-// A0 = 0.0000000818          A1 =
-// den =8.42965342e-009
+uint16_t ADC[2] = { 0 };
+
+uint16_t sen_top = 0;
+uint16_t sen_bot = 0;
+
+uint32_t time = 0;
 
 
+
+/*-----------------------------------*/
+float32_t kp = 0;
+float32_t ki = 0;
+float32_t kd = 0;
+uint32_t Now = 0;
+uint32_t Lastime = 0;
+float error = 0;
+float errorsum = 0;
+float Iterm = 0;
+float dinput = 0;
+float Lasterror = 0;
+float speed = 0;
+float LastPos = 0;
+
+
+
+/*--------------------------------------------------*/
+float Vmax = 600.0; // mm/s
+float Amax = 500.0; // mm/s^2
+float Distance = 0;
+float t = 0;
+float temp_pos_acc = 0;
+float temp_pos_const = 0;
+float temp_v_acc = 0;
+int temp = 0;
+float Distance_Velo_Max = 0;
+float traj[3];
+float pos = 0;
+float trajec_target = 0;
+
+float Time_acc = 0;
+float Time_acc_tri = 0;
+float Time_dec = 0;
+float Time_const = 0;
+float time_now = 0;
+float Timestamp = 0;
+float QEI_start = 0;
+uint8_t trajec_state = 0;
+
+uint8_t temp_check = 0;
+//uint32_t Position[2];
+//uint64_t TimeStamp[2];
 
 /* USER CODE END PV */
 
@@ -74,11 +123,17 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_LPUART1_UART_Init(void);
+static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_TIM2_Init(void);
+static void MX_TIM5_Init(void);
 /* USER CODE BEGIN PFP */
-void task1();
+void PID_Tuning();
+void sensor();
+void reset_pos();
+void HomemadePID();
+void Trajectory();
+void changeUnit();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -116,19 +171,30 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_LPUART1_UART_Init();
+  MX_TIM2_Init();
   MX_ADC1_Init();
   MX_TIM1_Init();
-  MX_TIM2_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
-	PID.Kp = 0.001;
-	PID.Ki = 0.0001;
-	PID.Kd = 0.025;
-	arm_pid_init_f32(&PID, 0);
+//	PID.Kp = 0.0001;
+//	PID.Ki = 0.0004291992;
+//	PID.Kd = 0;
+//	arm_pid_init_f32(&PID, 0);
 
-	HAL_ADC_Start_DMA(&hadc1, ADC_RawRead, 200);
-	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+	kp = 900;
+	ki = 7;
+	kd = 1;
+
+	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
+	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, 0);
 	HAL_TIM_Base_Start(&htim2);
+
+	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+	HAL_ADC_Start_DMA(&hadc1, ADC, 2);
+	reset_pos();
+
+	HAL_TIM_Encoder_Start(&htim1,TIM_CHANNEL_ALL);
+	trajec_target = -10;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -137,7 +203,17 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		task1();
+		QEI_raw = __HAL_TIM_GET_COUNTER(&htim1);
+		changeUnit();
+		sensor();
+		if(trajec_target >= 0 && trajec_state == 0){
+			QEI_start = QEI_mm;
+		}
+		Trajectory();
+		HomemadePID();
+		speedread();
+		LastPos = QEI_mm;
+
 	}
   /* USER CODE END 3 */
 }
@@ -240,7 +316,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
@@ -253,7 +329,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_2;
+  sConfig.Channel = ADC_CHANNEL_12;
   sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -324,31 +400,29 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 0 */
 
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 169;
+  htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 19999;
+  htim1.Init.Period = 65535;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 0;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 0;
+  if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
@@ -359,38 +433,9 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
-  sBreakDeadTimeConfig.BreakAFMode = TIM_BREAK_AFMODE_INPUT;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
-  sBreakDeadTimeConfig.Break2AFMode = TIM_BREAK_AFMODE_INPUT;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
-  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -440,6 +485,65 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM5_Init(void)
+{
+
+  /* USER CODE BEGIN TIM5_Init 0 */
+
+  /* USER CODE END TIM5_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM5_Init 1 */
+
+  /* USER CODE END TIM5_Init 1 */
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 3;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 29999;
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim5, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM5_Init 2 */
+
+  /* USER CODE END TIM5_Init 2 */
+  HAL_TIM_MspPostInit(&htim5);
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -474,10 +578,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|GPIO_PIN_15, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -485,19 +589,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : LD2_Pin PA15 */
+  GPIO_InitStruct.Pin = LD2_Pin|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC4 PC5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
+  /*Configure GPIO pin : PB7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
@@ -509,47 +613,273 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-int suminone(uint16_t pot[200], int numpot) {
-	uint32_t sum = 0;
-	for (int k = 0; k < 200; k++) {
-		if (numpot == 1 & k % 2 == 0) {
-			sum += pot[k];
-		} else if (numpot == 2 & k % 2 == 1) {
-			sum += pot[k];
-		}
-	}
-	return sum / 100;
-}
-
-void task1(){
-	setpoint = suminone(ADC_RawRead, 1);
-	en_motor = suminone(ADC_RawRead, 2);
-	setpoint_Dg = (suminone(ADC_RawRead, 1)/4095.0)*360.0;
-	en_motor_Dg = (suminone(ADC_RawRead, 2)/4095.0)*360.0;
-
+/*
+void PID_Tuning(){
 	static uint32_t timestamp = 0;
 	if (timestamp < __HAL_TIM_GET_COUNTER(&htim2)) {
 		timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
-		diffpos = setpoint_Dg - en_motor_Dg;
-		if(diffpos > 200)
-			diffpos -=360;
-		if(diffpos < -200)
-			diffpos +=360;
+		Now = __HAL_TIM_GET_COUNTER(&htim2);
+		diffpos = set_point - QEI_raw;
+		if(diffpos > 32768)
+			diffpos -= 65536;
+		if(diffpos < -32768)
+			diffpos += 65536;
 
-		if(diffpos >= 0){
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,1);
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,0);
-			Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
+		Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
+
+		if(diffpos > 0){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
 		}
-		else if(diffpos <= 0){
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,0);
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,1);
-			Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
+		else if(diffpos < 0){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 		}
-		PWMset = fabs(Vfeedback*10);
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PWMset);
+		else if(diffpos == 0){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+		}
+
+		PWMset = (Vfeedback/65536.0)*60000;
+		if(diffpos > -60 && diffpos < 60 && time > 0){
+			PWMset = PWMset/((Now-time)/1000000);
+		}
+		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, PWMset);
 	}
 }
+*/
+
+void sensor() {
+	sen_top = ADC[0];
+	sen_bot = ADC[1];
+}
+
+void reset_pos(){
+	set_point = 0;
+	PID.state[2] = 0;
+	time = 0;
+	while(sen_bot < 2048){
+		sensor();
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,7000);
+	}
+	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,0);
+	HAL_Delay(500);
+
+	sensor();
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
+	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,10000);
+	HAL_Delay(2500);
+
+	sensor();
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,7000);
+	HAL_Delay(500);
+	while(sen_bot < 2048){
+		sensor();
+		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,4300);
+	}
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,10000);
+	HAL_Delay(1000);
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if(GPIO_Pin == GPIO_PIN_13)
+	{
+//		condi += 1;
+		trajec_target = 300;
+	}
+}
+
+void changeUnit(){
+	QEI_mm = (QEI_raw/8192.0)*25*pi;
+}
+
+void HomemadePID(){
+//	Now Lastime error errorsum kp ki kd Iterm dinput Lasterror
+	set_point = traj[0];
+	static uint32_t timestamp = 0;
+	if (timestamp < __HAL_TIM_GET_COUNTER(&htim2)) {
+		timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
+		Now = __HAL_TIM_GET_COUNTER(&htim2);
+		error = set_point - QEI_mm;
+		errorsum = errorsum + (error*(Now-Lastime)/1000);
+		Iterm = ki*errorsum;
+		if(Iterm < -65535 && Iterm > 65535){
+			errorsum = (Iterm/ki) - (error*(Now-Lastime));
+		}
+
+		dinput = (error-Lasterror)/(Now-Lastime);
+		Vfeedback = (kp*error)+(ki*errorsum)+(kd*dinput);
+
+		if(error > 32768)
+			error -= 65536;
+		if(error < -32768)
+			error += 65536;
+
+		if(error > 0){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
+		}
+		else if(error < 0){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+		}
+		else if(error == 0){
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+		}
+
+		PWMset = (Vfeedback/65536.0)*30000;
+		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, PWMset);
+
+
+		Lastime = Now;
+		Lasterror = error;
+	}
+}
+
+
+void speedread(){
+	Now = __HAL_TIM_GET_COUNTER(&htim2);
+	speed = (QEI_mm - LastPos)*1000000/(Now - Lastime);
+	Lastime = Now;
+}
+
+void Trajectory(){
+	Distance = trajec_target - QEI_start;
+	Time_acc = Vmax / Amax;
+	Time_dec = Time_acc;
+
+
+	time_now = __HAL_TIM_GET_COUNTER(&htim2);
+
+	if(trajec_target >= 0 && trajec_state == 0){
+		trajec_state = 1;
+		Timestamp = time_now;
+		QEI_start = QEI_mm;
+		pos = QEI_start;
+	}
+	else if(Distance > 0 && trajec_state == 1){	//Run Up
+		Distance_Velo_Max = -(Vmax*Time_acc) + Distance ;
+		t = (time_now - Timestamp)/1000000.0;  //s
+		if(Distance_Velo_Max > 0){						//Trapezoi
+			temp_check = 1;
+			Time_const = Distance_Velo_Max/Vmax;
+			if(t < Time_acc){
+				traj[2] = Amax;
+				traj[1] = Amax*t;
+				traj[0] = (Amax/2.0)*t*t + pos;
+				temp_pos_acc = traj[0];
+			}
+			else if(t < Time_const+Time_acc){
+				traj[2] = 0;
+				traj[1] = Vmax;
+				traj[0] = (Vmax*(t-Time_acc)) + temp_pos_acc;
+				temp_pos_const = traj[0];
+			}
+			else if(t < Time_const+Time_acc+Time_dec){
+				traj[2] = -Amax;
+				traj[1] = (traj[2]*(t-Time_const-Time_acc)) + Vmax;
+				traj[0] = ((Amax/2)*(t-Time_const-Time_acc)*(t-Time_const-Time_acc))+(traj[1]*(t-Time_const-Time_acc))+temp_pos_const;
+			}
+			else{
+				trajec_state = 0;
+				trajec_target = -10;
+				traj[2] = 0;
+				temp_pos_acc = 0;
+				temp_pos_const = 0;
+			}
+		}
+		else if(Distance_Velo_Max <= 0){				//Triangle
+			temp_check = 2;
+			Time_acc_tri = sqrt(Distance/Amax);
+			if(t < Time_acc_tri){
+				traj[2] = Amax;
+				traj[1] = Amax*t;
+				traj[0] = (Amax/2.0)*t*t + pos;
+				temp_pos_acc = traj[0];
+				temp_v_acc = traj[1];
+			}
+			else if(t < Time_acc_tri*2){
+				traj[2] = -Amax;
+				traj[1] = temp_v_acc - (Amax*(t-Time_acc_tri));
+				traj[0] = ((Amax/2.0)*(t-Time_acc_tri)*(t-Time_acc_tri))+(traj[1]*(t-Time_acc_tri))+temp_pos_acc;
+			}
+			else{
+				trajec_state = 0;
+				trajec_target = -10;
+				traj[2] = 0;
+				Time_acc_tri = 0;
+				temp_pos_acc = 0;
+				temp_v_acc = 0;
+			}
+		}
+	}
+	else if(Distance < 0 && trajec_state == 1){        		// Run Down
+		Distance_Velo_Max = (Vmax*Time_acc) + Distance ;
+		t = (time_now - Timestamp)/1000000.0;  //s
+		if(Distance_Velo_Max < 0){							//Trapezoi
+			temp_check = 3;
+			Time_const = Distance_Velo_Max/Vmax;
+			if(t < Time_acc){
+				traj[2] = -Amax;
+				traj[1] = -Amax*t;
+				traj[0] = (-Amax/2.0)*t*t + pos;
+				temp_pos_acc = traj[0];
+			}
+			else if(t < Time_const+Time_acc){
+				traj[2] = 0;
+				traj[1] = -Vmax;
+				traj[0] = (-Vmax*(t-Time_acc)) + temp_pos_acc;
+				temp_pos_const = traj[0];
+			}
+			else if(t < Time_const+Time_acc+Time_dec){
+				traj[2] = Amax;
+				traj[1] = (traj[2]*(t-Time_const-Time_acc)) - Vmax;
+				traj[0] = ((Amax/2)*(t-Time_const-Time_acc)*(t-Time_const-Time_acc))+(traj[1]*(t-Time_const-Time_acc))+temp_pos_const;
+			}
+			else{
+				trajec_state = 0;
+				trajec_target = -10;
+				traj[2] = 0;
+				temp_pos_acc = 0;
+				temp_pos_const = 0;
+			}
+		}
+		else if(Distance_Velo_Max >= 0){					//Triangle
+			temp_check = 4;
+			Time_acc_tri = sqrt(-Distance/Amax);
+			if(t < Time_acc_tri){
+				traj[2] = -Amax;
+				traj[1] = -Amax*t;
+				traj[0] = (-Amax/2.0)*t*t + pos;
+				temp_pos_acc = traj[0];
+				temp_v_acc = traj[1];
+			}
+			else if(t < Time_acc_tri*2){
+				traj[2] = Amax;
+				traj[1] = temp_v_acc + (Amax*(t-Time_acc_tri));
+				traj[0] = ((-Amax/2.0)*(t-Time_acc_tri)*(t-Time_acc_tri))+(traj[1]*(t-Time_acc_tri))+temp_pos_acc;
+			}
+			else{
+				trajec_state = 0;
+				trajec_target = -10;
+				traj[2] = 0;
+				Time_acc_tri = 0;
+				temp_pos_acc = 0;
+				temp_v_acc = 0;
+			}
+		}
+	}
+}
+
 /* USER CODE END 4 */
 
 /**
