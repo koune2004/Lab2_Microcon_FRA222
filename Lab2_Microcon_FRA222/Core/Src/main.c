@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "arm_math.h"
+#include "math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,6 +48,7 @@ UART_HandleTypeDef hlpuart1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim5;
 
 /* USER CODE BEGIN PV */
@@ -61,7 +63,7 @@ float set_point = 0;
 float en_motor = 0;
 float PWMset = 0;
 float diffpos = 0;
-uint16_t Vfeedback = 0;
+uint32_t Vfeedback = 0;
 uint8_t condi = 0;
 
 uint16_t ADC[2] = { 0 };
@@ -86,6 +88,7 @@ float dinput = 0;
 float Lasterror = 0;
 float speed = 0;
 float LastPos = 0;
+float Dis_down = 0;
 
 
 
@@ -116,6 +119,8 @@ uint8_t temp_check = 0;
 //uint32_t Position[2];
 //uint64_t TimeStamp[2];
 
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -127,6 +132,7 @@ static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 void PID_Tuning();
 void sensor();
@@ -134,6 +140,7 @@ void reset_pos();
 void HomemadePID();
 void Trajectory();
 void changeUnit();
+void speedread();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -175,15 +182,16 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM1_Init();
   MX_TIM5_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 //	PID.Kp = 0.0001;
 //	PID.Ki = 0.0004291992;
 //	PID.Kd = 0;
 //	arm_pid_init_f32(&PID, 0);
 
-	kp = 900;
-	ki = 7;
-	kd = 1;
+//	kp = 510;
+//	ki = 10;
+//	kd = 0.01;
 
 	HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
 	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, 0);
@@ -195,6 +203,9 @@ int main(void)
 
 	HAL_TIM_Encoder_Start(&htim1,TIM_CHANNEL_ALL);
 	trajec_target = -10;
+
+	HAL_TIM_Base_Start_IT(&htim3);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -203,9 +214,26 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+//		if(temp == 10){
+//			set_point = 300;
+//		}
 		QEI_raw = __HAL_TIM_GET_COUNTER(&htim1);
 		changeUnit();
 		sensor();
+//		if(sen_top < 2048 || sen_bot < 2048){
+//			if(trajec_target >= 0 && trajec_state == 0){
+//				QEI_start = QEI_mm;
+//			}
+//			Trajectory();
+//			HomemadePID();
+//			speedread();
+//		}
+//		else if(sen_top > 2048 || sen_bot > 2048){
+//			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+//			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+//			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,10000);
+//		}
+
 		if(trajec_target >= 0 && trajec_state == 0){
 			QEI_start = QEI_mm;
 		}
@@ -213,6 +241,9 @@ int main(void)
 		HomemadePID();
 		speedread();
 		LastPos = QEI_mm;
+
+
+
 
 	}
   /* USER CODE END 3 */
@@ -485,6 +516,51 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 169;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 999;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
   * @brief TIM5 Initialization Function
   * @param None
   * @retval None
@@ -656,7 +732,6 @@ void sensor() {
 
 void reset_pos(){
 	set_point = 0;
-	PID.state[2] = 0;
 	time = 0;
 	while(sen_bot < 2048){
 		sensor();
@@ -692,13 +767,39 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == GPIO_PIN_13)
 	{
-//		condi += 1;
-		trajec_target = 300;
+		condi += 1;
+//		if(condi % 6 == 1){
+//			trajec_target = 400;
+//		} else if(condi % 6 == 2){
+//			trajec_target = 100;
+//		} else if(condi % 6 == 3){
+//			trajec_target = 500;
+//		} else if(condi % 6 == 4){
+//			trajec_target = 200;
+//		} else if(condi % 6 == 5){
+//			trajec_target = 600;
+//		} else if(condi % 6 == 0){
+//			trajec_target = 0;
+//		}
+		if(condi % 2 == 1){
+			trajec_target = 600;
+		} else if(condi % 2 == 0){
+			trajec_target = 0;
+		}
+//		if(condi % 4 == 1){
+//			set_point = 400;
+//		} else if(condi % 4 == 2){
+//			set_point = 100;
+//		} else if(condi % 4 == 3){
+//			set_point = 500;
+//		} else if(condi % 4 == 0){
+//			set_point = 0;
+//		}
 	}
 }
 
 void changeUnit(){
-	QEI_mm = (QEI_raw/8192.0)*25*pi;
+	QEI_mm = (QEI_raw/8192.0)*25.326*pi;
 }
 
 void HomemadePID(){
@@ -709,14 +810,6 @@ void HomemadePID(){
 		timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
 		Now = __HAL_TIM_GET_COUNTER(&htim2);
 		error = set_point - QEI_mm;
-		errorsum = errorsum + (error*(Now-Lastime)/1000);
-		Iterm = ki*errorsum;
-		if(Iterm < -65535 && Iterm > 65535){
-			errorsum = (Iterm/ki) - (error*(Now-Lastime));
-		}
-
-		dinput = (error-Lasterror)/(Now-Lastime);
-		Vfeedback = (kp*error)+(ki*errorsum)+(kd*dinput);
 
 		if(error > 32768)
 			error -= 65536;
@@ -726,19 +819,50 @@ void HomemadePID(){
 		if(error > 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
+			errorsum = errorsum + (error*(Now-Lastime)/10000);
+			Iterm = ki*errorsum;
+			if(Iterm < -65535 || Iterm > 65535){
+				errorsum = (Iterm/ki) - (error*(Now-Lastime));
+			}
+			dinput = (error-Lasterror)/(Now-Lastime);
+			Vfeedback = (kp*error)+(ki*errorsum)+(kd*dinput);
+			if(Vfeedback > 65536){
+				Vfeedback = 65536;
+			}
+
+			PWMset = (Vfeedback/65536.0)*30000;
 		}
 		else if(error < 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+			error = error*(-1);
+
+			if(temp_check == 3){
+				if(t < Time_acc){
+					PWMset = 6000;
+				}
+				else if(t < Time_const+Time_acc){
+					PWMset = 7000;
+				}
+				else if(t < Time_const+Time_acc+Time_dec){
+					PWMset = 4000;
+				}
+			}
+			else if(temp_check == 4){
+				if(t < Time_acc_tri*1.4){
+					PWMset = 7000;
+				}
+				else if(t < Time_acc_tri*2){
+					PWMset = 3700;
+				}
+			}
 		}
 		else if(error == 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 		}
 
-		PWMset = (Vfeedback/65536.0)*30000;
 		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, PWMset);
-
 
 		Lastime = Now;
 		Lasterror = error;
@@ -748,7 +872,7 @@ void HomemadePID(){
 
 void speedread(){
 	Now = __HAL_TIM_GET_COUNTER(&htim2);
-	speed = (QEI_mm - LastPos)*1000000/(Now - Lastime);
+	speed = ((QEI_mm - LastPos)*1000000.0)/(Now - Lastime);
 	Lastime = Now;
 }
 
@@ -767,6 +891,9 @@ void Trajectory(){
 		pos = QEI_start;
 	}
 	else if(Distance > 0 && trajec_state == 1){	//Run Up
+		kp = 520;
+		ki = 10;
+		kd = 1;
 		Distance_Velo_Max = -(Vmax*Time_acc) + Distance ;
 		t = (time_now - Timestamp)/1000000.0;  //s
 		if(Distance_Velo_Max > 0){						//Trapezoi
@@ -823,6 +950,9 @@ void Trajectory(){
 		}
 	}
 	else if(Distance < 0 && trajec_state == 1){        		// Run Down
+		kp = 200;
+		ki = 10;
+		kd = 8;
 		Distance_Velo_Max = (Vmax*Time_acc) + Distance ;
 		t = (time_now - Timestamp)/1000000.0;  //s
 		if(Distance_Velo_Max < 0){							//Trapezoi
@@ -879,6 +1009,8 @@ void Trajectory(){
 		}
 	}
 }
+
+
 
 /* USER CODE END 4 */
 
