@@ -184,8 +184,8 @@ int main(void)
   MX_TIM5_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-//	PID.Kp = 0.0001;
-//	PID.Ki = 0.0004291992;
+//	PID.Kp = 1;
+//	PID.Ki = 0.04291992;
 //	PID.Kd = 0;
 //	arm_pid_init_f32(&PID, 0);
 
@@ -239,6 +239,7 @@ int main(void)
 		}
 		Trajectory();
 		HomemadePID();
+//		PID_Tuning();
 		speedread();
 		LastPos = QEI_mm;
 
@@ -691,17 +692,13 @@ static void MX_GPIO_Init(void)
 
 /*
 void PID_Tuning(){
-	static uint32_t timestamp = 0;
-	if (timestamp < __HAL_TIM_GET_COUNTER(&htim2)) {
-		timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
+		set_point = traj[0];
 		Now = __HAL_TIM_GET_COUNTER(&htim2);
-		diffpos = set_point - QEI_raw;
+		diffpos = set_point - QEI_mm;
 		if(diffpos > 32768)
 			diffpos -= 65536;
 		if(diffpos < -32768)
 			diffpos += 65536;
-
-		Vfeedback = arm_pid_f32(&PID, fabs(diffpos));
 
 		if(diffpos > 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
@@ -710,20 +707,24 @@ void PID_Tuning(){
 		else if(diffpos < 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+			diffpos = diffpos*-1;
 		}
 		else if(diffpos == 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 		}
 
-		PWMset = (Vfeedback/65536.0)*60000;
-		if(diffpos > -60 && diffpos < 60 && time > 0){
-			PWMset = PWMset/((Now-time)/1000000);
-		}
+
+
+		Vfeedback = arm_pid_f32(&PID, diffpos);
+
+		PWMset = (Vfeedback/65536.0)*30000;
+//		if(diffpos > -60 && diffpos < 60 && time > 0){
+//			PWMset = PWMset/((Now-time)/1000000);
+//		}
 		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, PWMset);
-	}
 }
-*/
+//*/
 
 void sensor() {
 	sen_top = ADC[0];
@@ -739,14 +740,16 @@ void reset_pos(){
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,7000);
 	}
-	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,0);
-	HAL_Delay(500);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,30000);
+	HAL_Delay(250);
 
 	sensor();
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
 	__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,10000);
-	HAL_Delay(2500);
+	HAL_Delay(1500);
 
 	sensor();
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
@@ -765,37 +768,9 @@ void reset_pos(){
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-	if(GPIO_Pin == GPIO_PIN_13)
-	{
-		condi += 1;
-//		if(condi % 6 == 1){
-//			trajec_target = 400;
-//		} else if(condi % 6 == 2){
-//			trajec_target = 100;
-//		} else if(condi % 6 == 3){
-//			trajec_target = 500;
-//		} else if(condi % 6 == 4){
-//			trajec_target = 200;
-//		} else if(condi % 6 == 5){
-//			trajec_target = 600;
-//		} else if(condi % 6 == 0){
-//			trajec_target = 0;
-//		}
-		if(condi % 2 == 1){
-			trajec_target = 600;
-		} else if(condi % 2 == 0){
-			trajec_target = 0;
-		}
-//		if(condi % 4 == 1){
-//			set_point = 400;
-//		} else if(condi % 4 == 2){
-//			set_point = 100;
-//		} else if(condi % 4 == 3){
-//			set_point = 500;
-//		} else if(condi % 4 == 0){
-//			set_point = 0;
-//		}
-	}
+//	if(GPIO_Pin == GPIO_PIN_13)
+//	{
+//	}
 }
 
 void changeUnit(){
@@ -811,12 +786,28 @@ void HomemadePID(){
 		Now = __HAL_TIM_GET_COUNTER(&htim2);
 		error = set_point - QEI_mm;
 
+		if(error < 1 && error > -1){
+			errorsum = 0;
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
+			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,30000);
+		} else if(error < 10 && error > -10){
+			errorsum += 10;
+		} else if(error < 15 && error > -15){
+			errorsum += 15;
+		} else if(error < 20 && error > -20){
+			errorsum += 20;
+		}
+
 		if(error > 32768)
 			error -= 65536;
 		if(error < -32768)
 			error += 65536;
 
 		if(error > 0){
+			kp = 520;
+			ki = 2;
+			kd = 1;
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
 			errorsum = errorsum + (error*(Now-Lastime)/10000);
@@ -833,29 +824,33 @@ void HomemadePID(){
 			PWMset = (Vfeedback/65536.0)*30000;
 		}
 		else if(error < 0){
+			kp = 20;
+			ki = 50;
+			kd = 8;
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 			error = error*(-1);
 
-			if(temp_check == 3){
-				if(t < Time_acc){
-					PWMset = 6000;
+//			if(t < Time_acc_tri){
+//				PWMset = 8000;
+//			} else{
+				errorsum = errorsum + (error*(Now-Lastime)/10000);
+				Iterm = ki*errorsum;
+				if(Iterm < -65535 || Iterm > 65535){
+					errorsum = (Iterm/ki) - (error*(Now-Lastime));
 				}
-				else if(t < Time_const+Time_acc){
-					PWMset = 7000;
+				dinput = (error-Lasterror)/(Now-Lastime);
+				Vfeedback = (kp*error)+(ki*errorsum)+(kd*dinput);
+				if(Vfeedback > 65536){
+					Vfeedback = 65536;
 				}
-				else if(t < Time_const+Time_acc+Time_dec){
-					PWMset = 4000;
+
+				PWMset = (Vfeedback/65536.0)*30000;
+				if(PWMset > 8000){
+					PWMset = 8000;
 				}
-			}
-			else if(temp_check == 4){
-				if(t < Time_acc_tri*1.4){
-					PWMset = 7000;
-				}
-				else if(t < Time_acc_tri*2){
-					PWMset = 3700;
-				}
-			}
+//				PWMset = 4000;
+//			}
 		}
 		else if(error == 0){
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
@@ -891,9 +886,6 @@ void Trajectory(){
 		pos = QEI_start;
 	}
 	else if(Distance > 0 && trajec_state == 1){	//Run Up
-		kp = 520;
-		ki = 10;
-		kd = 1;
 		Distance_Velo_Max = -(Vmax*Time_acc) + Distance ;
 		t = (time_now - Timestamp)/1000000.0;  //s
 		if(Distance_Velo_Max > 0){						//Trapezoi
@@ -950,9 +942,6 @@ void Trajectory(){
 		}
 	}
 	else if(Distance < 0 && trajec_state == 1){        		// Run Down
-		kp = 200;
-		ki = 10;
-		kd = 8;
 		Distance_Velo_Max = (Vmax*Time_acc) + Distance ;
 		t = (time_now - Timestamp)/1000000.0;  //s
 		if(Distance_Velo_Max < 0){							//Trapezoi
