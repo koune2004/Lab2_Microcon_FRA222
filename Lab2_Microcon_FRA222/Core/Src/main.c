@@ -89,6 +89,7 @@ float Lasterror = 0;
 float speed = 0;
 float LastPos = 0;
 float Dis_down = 0;
+uint8_t finish_state = 0;
 
 
 
@@ -738,7 +739,7 @@ void reset_pos(){
 		sensor();
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
-		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,7000);
+		__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,7500);
 	}
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
@@ -785,18 +786,16 @@ void HomemadePID(){
 		timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 1000;
 		Now = __HAL_TIM_GET_COUNTER(&htim2);
 		error = set_point - QEI_mm;
+		finish_state = 0;
 
-		if(error < 1 && error > -1){
+		if(error < 2 && error > -2){
 			errorsum = 0;
+			finish_state = 1;
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,30000);
-		} else if(error < 10 && error > -10){
-			errorsum += 10;
-		} else if(error < 15 && error > -15){
+		} else if(error < 11 && error > -11){
 			errorsum += 15;
-		} else if(error < 20 && error > -20){
-			errorsum += 20;
 		}
 
 		if(error > 32768)
@@ -805,9 +804,6 @@ void HomemadePID(){
 			error += 65536;
 
 		if(error > 0){
-			kp = 520;
-			ki = 2;
-			kd = 1;
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
 			errorsum = errorsum + (error*(Now-Lastime)/10000);
@@ -824,9 +820,6 @@ void HomemadePID(){
 			PWMset = (Vfeedback/65536.0)*30000;
 		}
 		else if(error < 0){
-			kp = 20;
-			ki = 50;
-			kd = 8;
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,1);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 			error = error*(-1);
@@ -886,6 +879,9 @@ void Trajectory(){
 		pos = QEI_start;
 	}
 	else if(Distance > 0 && trajec_state == 1){	//Run Up
+		kp = 900;
+		ki = 7;
+		kd = 1;
 		Distance_Velo_Max = -(Vmax*Time_acc) + Distance ;
 		t = (time_now - Timestamp)/1000000.0;  //s
 		if(Distance_Velo_Max > 0){						//Trapezoi
@@ -942,6 +938,9 @@ void Trajectory(){
 		}
 	}
 	else if(Distance < 0 && trajec_state == 1){        		// Run Down
+		kp = 900;
+		ki = 10;
+		kd = 0;
 		Distance_Velo_Max = (Vmax*Time_acc) + Distance ;
 		t = (time_now - Timestamp)/1000000.0;  //s
 		if(Distance_Velo_Max < 0){							//Trapezoi
