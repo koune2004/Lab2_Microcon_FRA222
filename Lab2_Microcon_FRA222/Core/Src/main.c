@@ -89,6 +89,8 @@ float Lasterror = 0;
 float speed = 0;
 float LastPos = 0;
 float Dis_down = 0;
+float dt_velo = 0;
+float dt_acc = 0;
 uint8_t finish_state = 0;
 
 
@@ -114,6 +116,13 @@ float Time_const = 0;
 float time_now = 0;
 float Timestamp = 0;
 float QEI_start = 0;
+float tim_velo_new = 0;
+float tim_velo_last = 0;
+float tim_acc_new = 0;
+float tim_acc_last = 0;
+float velo_new = 0;
+float velo_last = 0;
+float acc = 0;
 uint8_t trajec_state = 0;
 
 uint8_t temp_check = 0;
@@ -242,7 +251,7 @@ int main(void)
 		HomemadePID();
 //		PID_Tuning();
 		speedread();
-		LastPos = QEI_mm;
+
 
 
 
@@ -450,7 +459,7 @@ static void MX_TIM1_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 2;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
@@ -769,9 +778,17 @@ void reset_pos(){
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-//	if(GPIO_Pin == GPIO_PIN_13)
-//	{
-//	}
+	if(GPIO_Pin == GPIO_PIN_13)
+	{
+		condi++;
+		if(condi % 3 == 1){
+			trajec_target = 400;
+		} else if(condi % 3 == 2){
+			trajec_target = 200;
+		} else if(condi % 3 == 0){
+			trajec_target = 0;
+		}
+	}
 }
 
 void changeUnit(){
@@ -808,14 +825,16 @@ void HomemadePID(){
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,1);
 			errorsum = errorsum + (error*(Now-Lastime)/10000);
 			Iterm = ki*errorsum;
-			if(Iterm < -65535 || Iterm > 65535){
+			if(Iterm > 65535){
 				errorsum = (Iterm/ki) - (error*(Now-Lastime));
 			}
+
 			dinput = (error-Lasterror)/(Now-Lastime);
 			Vfeedback = (kp*error)+(ki*errorsum)+(kd*dinput);
 			if(Vfeedback > 65536){
 				Vfeedback = 65536;
 			}
+
 
 			PWMset = (Vfeedback/65536.0)*30000;
 		}
@@ -829,7 +848,7 @@ void HomemadePID(){
 //			} else{
 				errorsum = errorsum + (error*(Now-Lastime)/10000);
 				Iterm = ki*errorsum;
-				if(Iterm < -65535 || Iterm > 65535){
+				if(Iterm > 65535){
 					errorsum = (Iterm/ki) - (error*(Now-Lastime));
 				}
 				dinput = (error-Lasterror)/(Now-Lastime);
@@ -859,9 +878,25 @@ void HomemadePID(){
 
 
 void speedread(){
-	Now = __HAL_TIM_GET_COUNTER(&htim2);
-	speed = ((QEI_mm - LastPos)*1000000.0)/(Now - Lastime);
-	Lastime = Now;
+	static uint32_t Timestamp = 0;
+	if (Timestamp < __HAL_TIM_GET_COUNTER(&htim2)) {
+		Timestamp = __HAL_TIM_GET_COUNTER(&htim2) + 10000;
+		QEI_raw = __HAL_TIM_GET_COUNTER(&htim1);
+		changeUnit();
+		tim_velo_new = __HAL_TIM_GET_COUNTER(&htim2);
+		dt_velo = (tim_velo_new - tim_velo_last)/1000000.0;
+		speed = (QEI_mm - LastPos)/dt_velo;
+
+		tim_acc_new = __HAL_TIM_GET_COUNTER(&htim2);
+		velo_new = speed;
+		dt_acc = (tim_acc_new - tim_acc_last)/1000000.0;
+		acc = (velo_new - velo_last)/dt_acc;
+
+		velo_last = velo_new;
+		LastPos = QEI_mm;
+		tim_velo_last = tim_velo_new;
+		tim_acc_last = tim_acc_new;
+	}
 }
 
 void Trajectory(){
