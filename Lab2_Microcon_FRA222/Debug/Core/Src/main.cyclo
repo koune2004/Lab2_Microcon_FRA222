@@ -13,6 +13,7 @@
 ../Core/Src/main.c:779:6:HAL_GPIO_EXTI_Callback	5
 ../Core/Src/main.c:794:6:changeUnit	1
 ../Core/Src/main.c:798:6:HomemadePID	16
-../Core/Src/main.c:880:6:speedread	2
-../Core/Src/main.c:902:6:Trajectory	21
-../Core/Src/main.c:1044:6:Error_Handler	1
+../Core/Src/main.c:881:6:speedread	2
+../Core/Src/main.c:896:6:accelread	2
+../Core/Src/main.c:911:6:Trajectory	21
+../Core/Src/main.c:1053:6:Error_Handler	1

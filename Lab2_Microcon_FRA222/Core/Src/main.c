@@ -96,8 +96,8 @@ uint8_t finish_state = 0;
 
 
 /*--------------------------------------------------*/
-float Vmax = 600.0; // mm/s
-float Amax = 500.0; // mm/s^2
+float Vmax = 550.0; // mm/s
+float Amax = 900.0; // mm/s^2
 float Distance = 0;
 float t = 0;
 float temp_pos_acc = 0;
@@ -251,7 +251,7 @@ int main(void)
 		HomemadePID();
 //		PID_Tuning();
 		speedread();
-
+		accelread();
 
 
 
@@ -782,7 +782,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	{
 		condi++;
 		if(condi % 3 == 1){
-			trajec_target = 400;
+			trajec_target = 600;
 		} else if(condi % 3 == 2){
 			trajec_target = 200;
 		} else if(condi % 3 == 0){
@@ -805,13 +805,14 @@ void HomemadePID(){
 		error = set_point - QEI_mm;
 		finish_state = 0;
 
-		if(error < 2 && error > -2){
+		if(error < 1 && error > -1){
 			errorsum = 0;
 			finish_state = 1;
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15,0);
 			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,0);
 			__HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2,30000);
-		} else if(error < 11 && error > -11){
+		}
+		else if(error < 11 && error > -11){
 			errorsum += 15;
 		}
 
@@ -887,14 +888,22 @@ void speedread(){
 		dt_velo = (tim_velo_new - tim_velo_last)/1000000.0;
 		speed = (QEI_mm - LastPos)/dt_velo;
 
+		LastPos = QEI_mm;
+		tim_velo_last = tim_velo_new;
+	}
+}
+
+void accelread(){
+	static uint32_t TimesTamp = 0;
+	if (TimesTamp < __HAL_TIM_GET_COUNTER(&htim2)) {
+		TimesTamp = __HAL_TIM_GET_COUNTER(&htim2) + 40000;
+
 		tim_acc_new = __HAL_TIM_GET_COUNTER(&htim2);
 		velo_new = speed;
 		dt_acc = (tim_acc_new - tim_acc_last)/1000000.0;
 		acc = (velo_new - velo_last)/dt_acc;
 
 		velo_last = velo_new;
-		LastPos = QEI_mm;
-		tim_velo_last = tim_velo_new;
 		tim_acc_last = tim_acc_new;
 	}
 }
